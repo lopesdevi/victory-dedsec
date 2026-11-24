@@ -118,7 +118,7 @@ fn runtime_info(container: &[u8]) -> Option<(u32, u32, Option<[u32; 3]>)> {
 }
 
 /// Translated and validated; the text says what was found on the way.
-fn prepare(hash: &str, container: &[u8], validator: &mut Option<Validator>) -> Option<HostShader> {
+fn prepare(hash: &str, container: &[u8], validator: &mut Option<Validator>, dump: Option<&std::path::Path>) -> Option<HostShader> {
     let mut shader = match emit::translate(container) {
         Ok(shader) => shader,
         Err(e) => {
@@ -130,7 +130,17 @@ fn prepare(hash: &str, container: &[u8], validator: &mut Option<Validator>) -> O
     if let Some((min, max, threads)) = runtime_info(&shader.dxil) {
         println!("{hash}  PSV0: wave lanes {min}..{max}, numthreads {threads:?}");
     }
-    match validator.as_mut().map(|v| v.validate(&mut shader.dxil)) {
+    let checked = validator.as_mut().map(|v| v.validate(&mut shader.dxil));
+    // `--dump <dir>`: the translation as the host gets it (signed by the
+    // validator where it passed), for `dxc -dumpbin` and the like.
+    if let Some(dir) = dump {
+        let file = dir.join(format!("{hash}.dxil"));
+        match std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, &shader.dxil)) {
+            Ok(()) => println!("{hash}  written to {}", file.display()),
+            Err(e) => println!("{hash}  not written: {e}"),
+        }
+    }
+    match checked {
         Some(Ok(())) => println!("{hash}  validator: accepted"),
         Some(Err(e)) => println!("{hash}  validator: REFUSED: {}", e.lines().take(12).collect::<Vec<_>>().join(" | ")),
         None => println!("{hash}  validator: not loaded (set VICTORY_DXIL to dxil.dll)"),
@@ -138,7 +148,8 @@ fn prepare(hash: &str, container: &[u8], validator: &mut Option<Validator>) -> O
     Some(shader)
 }
 
-pub fn run(paths: Vec<PathBuf>, hashes: Vec<String>, pairs: Vec<String>) -> Result<()> {
+pub fn run(paths: Vec<PathBuf>, hashes: Vec<String>, pairs: Vec<String>, dump: Option<PathBuf>) -> Result<()> {
+    let dump = dump.as_deref();
     // The debug layer's messages are what this command is for.
     // SAFETY: set before any other thread of ours is started.
     unsafe { std::env::set_var("VICTORY_D3D12_DEBUG", "1") };
@@ -203,7 +214,7 @@ pub fn run(paths: Vec<PathBuf>, hashes: Vec<String>, pairs: Vec<String>) -> Resu
             refused += 1;
             continue;
         };
-        let Some(shader) = prepare(&hash, container, &mut validator) else {
+        let Some(shader) = prepare(&hash, container, &mut validator, dump) else {
             refused += 1;
             continue;
         };
@@ -221,7 +232,7 @@ pub fn run(paths: Vec<PathBuf>, hashes: Vec<String>, pairs: Vec<String>) -> Resu
             refused += 1;
             continue;
         };
-        let (Some(a), Some(b)) = (prepare(first, a, &mut validator), prepare(second, b, &mut validator)) else {
+        let (Some(a), Some(b)) = (prepare(first, a, &mut validator, dump), prepare(second, b, &mut validator, dump)) else {
             refused += 1;
             continue;
         };

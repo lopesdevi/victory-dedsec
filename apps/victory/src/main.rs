@@ -128,6 +128,9 @@ enum Command {
         /// Where to look for the shaders (default: the configured game folder).
         #[arg(long)]
         path: Vec<PathBuf>,
+        /// Write each translation to `<dir>/<hash>.dxil` (outside the repository).
+        #[arg(long)]
+        dump: Option<PathBuf>,
     },
     /// Show the resolved configuration and check it.
     Config,
@@ -197,7 +200,7 @@ fn main() -> Result<()> {
         } => run::run(&exe, unimplemented, strict, execute, console),
         Command::Precompile { paths, jobs } => precompile::run(paths, jobs),
         #[cfg(windows)]
-        Command::PsoRepro { hashes, pair, path } => pso_repro::run(path, hashes, pair),
+        Command::PsoRepro { hashes, pair, path, dump } => pso_repro::run(path, hashes, pair, dump),
         #[cfg(not(windows))]
         Command::PsoRepro { .. } => anyhow::bail!("pso-repro needs the Windows host"),
         Command::Config => show_config(),
