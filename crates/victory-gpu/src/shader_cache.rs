@@ -43,7 +43,16 @@ pub(crate) fn counts() -> (u64, u64) {
 fn build() -> &'static [u8; 32] {
     static BUILD: OnceLock<[u8; 32]> = OnceLock::new();
     BUILD.get_or_init(|| {
-        let exe = std::env::current_exe().and_then(std::fs::read);
+        // The translator's sources (build.rs), not the whole executable: a
+        // rebuild that leaves victory-shader and Cargo.lock alone keeps the
+        // cache. The run-time settings below are added as before.
+        // `VICTORY_SHADER_CACHE_KEY_EXE=<victory.exe>`: key by that executable's
+        // bytes, as builds before the fingerprint did, to reuse the cache an
+        // earlier build of the same translator filled.
+        let exe: std::io::Result<Vec<u8>> = match std::env::var_os("VICTORY_SHADER_CACHE_KEY_EXE") {
+            Some(path) => std::fs::read(path),
+            None => Ok(env!("VICTORY_TRANSLATOR_FINGERPRINT").as_bytes().to_vec()),
+        };
         let limit = victory_shader::emit::loop_limit();
         if limit != victory_shader::emit::DEFAULT_LOOP_LIMIT {
             tracing::warn!(
@@ -87,6 +96,20 @@ fn build() -> &'static [u8; 32] {
             }
         }
     })
+}
+
+/// `victory precompile`: a container through the same translation a title's
+/// pipeline gives it (the same host probe first, as `pipeline::translate`
+/// does, and the same cache key), so the run finds it in the cache.
+#[cfg(windows)]
+pub fn precompile(container: &[u8]) -> Result<(), String> {
+    crate::descriptor::host::probe_view_limit();
+    host_shader(container).map(|_| ())
+}
+
+/// (from the cache, translated) so far in this process.
+pub fn precompile_counts() -> (u64, u64) {
+    counts()
 }
 
 /// The translation of a console shader container, from the cache when

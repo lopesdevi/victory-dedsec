@@ -5,6 +5,7 @@
 
 mod census;
 mod inspect;
+mod precompile;
 mod run;
 mod shader;
 mod translate;
@@ -105,6 +106,14 @@ enum Command {
         #[arg(last = true)]
         title_args: Vec<String>,
     },
+    /// Translate every shader found (e.g. the title's shaders.rpf) into the
+    /// shader cache `run` uses, ahead of the run.
+    Precompile {
+        paths: Vec<PathBuf>,
+        /// Worker threads (default: every logical core).
+        #[arg(long)]
+        jobs: Option<usize>,
+    },
     /// Show the resolved configuration and check it.
     Config,
 }
@@ -171,6 +180,7 @@ fn main() -> Result<()> {
             console,
             title_args: _,
         } => run::run(&exe, unimplemented, strict, execute, console),
+        Command::Precompile { paths, jobs } => precompile::run(paths, jobs),
         Command::Config => show_config(),
     }
 }
