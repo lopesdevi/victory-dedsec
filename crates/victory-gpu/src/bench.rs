@@ -195,9 +195,9 @@ mod on {
         steady: u32,
         timeout: std::time::Duration,
         /// `VICTORY_BENCH_AT=<s>` and `VICTORY_BENCH_SECS=<s>`: measure the
-        /// frames presented in that stretch of the run's clock (from the
-        /// first present) instead: the title plays by the clock, so two
-        /// runs then measure the same stretch of the scene.
+        /// frames presented in that stretch of the clock, counted from the
+        /// first frame of the world, instead: the title plays by the clock,
+        /// so two runs then measure the same stretch of the scene.
         at: Option<(std::time::Duration, std::time::Duration)>,
     }
 
@@ -317,11 +317,27 @@ mod on {
         let wall_ns = state.last.replace(now).map_or(0, |last| (now - last).as_nanos() as u64);
         let no = state.no;
         if let Some((at, long)) = config.at {
-            let clock = now - state.started;
+            // From the first frame of the world: how long the run took to
+            // get there (loading) varies from run to run by seconds.
+            if state.world_since.is_none() && counters.draws >= config.min_draws {
+                state.world_since = Some(now);
+                tracing::info!(frame = no, "benchmark: the world is drawn");
+            }
+            let Some(since) = state.world_since else {
+                if now - state.started > config.timeout {
+                    return (no, Next::Done(Some("timed out before the world was drawn")));
+                }
+                return (no, Next::Go);
+            };
+            let clock = now - since;
             if clock >= at + long {
                 return (no, Next::Done(None));
             }
             if clock >= at {
+                if !state.capturing {
+                    state.capturing = true;
+                    tracing::info!(frame = no, "benchmark: measuring");
+                }
                 state.frames.push(Frame { no, wall_ns, main, all, most, calls, counters });
             }
             return (no, Next::Go);
