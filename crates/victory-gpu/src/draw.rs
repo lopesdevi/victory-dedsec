@@ -1445,8 +1445,13 @@ impl State {
         if !*ON.get_or_init(|| std::env::var_os("VICTORY_HEAP_TEXTURES").is_none_or(|v| v != "0")) {
             return;
         }
-        /// Bytes of texture memory staged per frame.
-        const PER_FRAME: u64 = 192 << 20;
+        // Bytes of texture memory staged per frame: `VICTORY_HEAP_TEXTURE_MB`
+        // (default 192, sized for 12 GB cards; with a big card and RAM more
+        // can stream in per frame, so fewer slots wait at a few frames a second).
+        static PER_FRAME_CELL: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let per_frame: u64 = *PER_FRAME_CELL.get_or_init(|| {
+            std::env::var("VICTORY_HEAP_TEXTURE_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|&n| n > 0).unwrap_or(192) << 20
+        });
         static FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
         static SPENT: AtomicU64 = AtomicU64::new(0);
         let frame = crate::frame::current();
@@ -1499,10 +1504,16 @@ impl State {
         // records the frame, and making and staging 192 MB of textures took
         // 1.6-2.2 s of each of the world's first twenty frames (run 20).
         // The rest waits for the next frames, as it does past the bytes.
-        const SPAN: std::time::Duration = std::time::Duration::from_millis(250);
+        // `VICTORY_HEAP_TEXTURE_MS` (default 250) sets that time.
+        static SPAN_CELL: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+        let span = *SPAN_CELL.get_or_init(|| {
+            std::time::Duration::from_millis(
+                std::env::var("VICTORY_HEAP_TEXTURE_MS").ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|&n| n > 0).unwrap_or(250),
+            )
+        });
         let began = std::time::Instant::now();
         for (index, write) in due {
-            if SPENT.load(Ordering::Relaxed) >= PER_FRAME || began.elapsed() > SPAN {
+            if SPENT.load(Ordering::Relaxed) >= per_frame || began.elapsed() > span {
                 break;
             }
             // A placed texture whose memory is not mapped (not streamed in

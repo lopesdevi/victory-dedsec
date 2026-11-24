@@ -914,9 +914,24 @@ const PIECE: usize = 64 << 10;
 ///
 /// # Safety
 /// Both ranges are valid for `len` bytes and do not overlap.
+/// Threads for wide copies, compares and the `victory-wide-*` pool:
+/// `VICTORY_WIDE_THREADS`, else half the logical processors, 2 to 12 (the
+/// caps were 6 and 8, sized for 16-thread CPUs).
+fn wide_cap() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("VICTORY_WIDE_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get() / 2).clamp(2, 12))
+            .min(32)
+    })
+}
+
 unsafe fn copy_wide(src: *const u8, dst: *mut u8, len: usize) {
-    const PER_THREAD: usize = 16 << 20;
-    let threads = (len / PER_THREAD).clamp(1, 6);
+    const PER_THREAD: usize = 8 << 20;
+    let threads = (len / PER_THREAD).clamp(1, wide_cap());
     if threads == 1 {
         // SAFETY: the caller's.
         unsafe { std::ptr::copy_nonoverlapping(src, dst, len) };
@@ -978,7 +993,7 @@ fn workers() -> &'static Workers {
         more: std::sync::Condvar::new(),
     });
     STARTED.call_once(|| {
-        let n = std::thread::available_parallelism().map_or(4, |n| n.get() / 4).clamp(2, 6);
+        let n = wide_cap();
         for i in 0..n {
             let _ = std::thread::Builder::new().name(format!("victory-wide-{i}")).spawn(move || {
                 let workers = WORKERS.get().expect("made above");
@@ -2064,8 +2079,8 @@ impl Shadow {
             }
             found
         };
-        const PER_THREAD: usize = 16 << 20;
-        let threads = ((to - from) / PER_THREAD).clamp(1, 8);
+        const PER_THREAD: usize = 8 << 20;
+        let threads = ((to - from) / PER_THREAD).clamp(1, wide_cap());
         if threads == 1 {
             return scan(from, to);
         }
