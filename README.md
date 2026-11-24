@@ -22,7 +22,7 @@ developer or publisher.
   another layer. Fixes inspired by it were written anew in VIctory's code.
 - This fork's changes were developed with [Claude Code](https://claude.com/claude-code).
 
-## lopesdevi/victory-fork: what this copy adds (2026-11-24)
+## lopesdevi/victory-dedsec: what this copy adds (2026-11-24)
 
 A fork of [fxceless/victory-fork](https://github.com/fxceless/victory-fork), a few commits on top of its
 `main` (`2119b0e`). Nothing here changes how the title is translated; these are tools and limits.
