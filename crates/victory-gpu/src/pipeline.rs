@@ -396,6 +396,13 @@ pub(crate) fn host_pipeline<'a>(this: This) -> Option<&'a host::HostPipeline> {
 
 /// Host pipelines queued and not made yet.
 #[cfg(windows)]
+/// Host pipelines compiled and loaded from the library since the start.
+#[cfg(feature = "bench")]
+pub(crate) fn bench_counts() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (library::MADE.load(Relaxed), library::LOADED.load(Relaxed))
+}
+
 pub(crate) fn making() -> u64 {
     make::waiting()
 }

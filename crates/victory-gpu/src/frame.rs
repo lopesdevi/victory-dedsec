@@ -142,6 +142,7 @@ pub(crate) extern "system" fn wait(
         tick -= 1;
         wait = Duration::ZERO;
     }
+    let pace = crate::bench::zone(crate::bench::Z::Pace);
     let hr = if wait > limit {
         std::thread::sleep(limit);
         TIMEOUT
@@ -150,6 +151,7 @@ pub(crate) extern "system" fn wait(
         last(kind).fetch_max(tick, Ordering::Relaxed);
         S_OK
     };
+    drop(pace);
     #[cfg(all(windows, feature = "diagnostics"))]
     {
         use crate::copystat::{C, add};

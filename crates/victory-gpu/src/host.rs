@@ -2302,6 +2302,7 @@ fn relay_wait(why: usize, done: impl Fn(&Line) -> bool) {
     if done(&line) {
         return;
     }
+    let _zone = crate::bench::zone(crate::bench::Z::Settle);
     LATE_STATS[1].fetch_add(1, Ordering::Relaxed);
     LATE_STATS[why].fetch_add(1, Ordering::Relaxed);
     let was_working = working(false);
@@ -2382,8 +2383,12 @@ fn relay_worker() {
             }
         };
         match next {
-            Ok(items) => host.relay_land(items, &mut fetch),
+            Ok(items) => {
+                let _zone = crate::bench::zone(crate::bench::Z::RelayLand);
+                host.relay_land(items, &mut fetch)
+            }
             Err(target) => {
+                let _zone = crate::bench::zone(crate::bench::Z::RelayWait);
                 let waiting = std::time::Instant::now();
                 // SAFETY: the host's fence and this thread's event.
                 let waited = unsafe {
@@ -3536,7 +3541,10 @@ impl Host {
                     self.queue.Signal(&self.fence, *submitted)?;
                     self.fence.SetEventOnCompletion(*submitted, self.event)?;
                     let was_working = working(false);
-                    WaitForSingleObject(self.event, INFINITE);
+                    {
+                            let _zone = crate::bench::zone(crate::bench::Z::GpuWait);
+                            WaitForSingleObject(self.event, INFINITE);
+                        }
                     stood(waiting);
                     working(was_working);
                     Ok(())
@@ -3712,6 +3720,7 @@ impl Host {
         if !late() {
             return;
         }
+        let _zone = crate::bench::zone(crate::bench::Z::Settle);
         if relay() {
             // Nothing is settled here: the thread that lands flights does
             // it, in order, and this waits until nothing is in the air and
@@ -3751,7 +3760,10 @@ impl Host {
                     match self.fence.SetEventOnCompletion(*submitted, self.event) {
                         Ok(()) => {
                             working(false);
+                            {
+                            let _zone = crate::bench::zone(crate::bench::Z::GpuWait);
                             WaitForSingleObject(self.event, INFINITE);
+                        }
                             stood(waiting);
                             working(true);
                         }
@@ -3784,6 +3796,7 @@ impl Host {
                     ));
                 }
                 submitting(3, flights);
+                let _back = crate::bench::zone(crate::bench::Z::CopyBack);
                 let copying = std::time::Instant::now();
                 let mut seen = std::collections::HashSet::new();
                 let mut back: Vec<Declared> = Vec::new();
@@ -3859,7 +3872,11 @@ impl Host {
         crate::copystat::submission_begins();
         // One submission at a time from preparation to copy-back: snapshots
         // and the ranges shaders write are per host copy, not per submission.
-        let mut submitted = self.submitted.lock().unwrap_or_else(|e| e.into_inner());
+        let _submit = crate::bench::zone(crate::bench::Z::Submit);
+        let mut submitted = {
+            let _zone = crate::bench::zone(crate::bench::Z::SubmitLock);
+            self.submitted.lock().unwrap_or_else(|e| e.into_inner())
+        };
         let was_working = working(true);
         submitting(1, runs.len());
         // Flights in the air ([`late`]): a submission that is waited for
@@ -3883,19 +3900,28 @@ impl Host {
         // one at every present).
         static SWEPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if !behind {
-            sweep();
+            {
+                let _zone = crate::bench::zone(crate::bench::Z::Sweep);
+                sweep();
+            }
             SWEPT.store(now_ms(), Ordering::Relaxed);
         } else if late_free_present() && now_ms() > SWEPT.load(Ordering::Relaxed) + 1500 {
             // With the present sent ahead nothing else brings a moment
             // with nothing in the air: one is made for the sweep.
             self.settle(&mut submitted, WHY_SYNC);
-            sweep();
+            {
+                let _zone = crate::bench::zone(crate::bench::Z::Sweep);
+                sweep();
+            }
             SWEPT.store(now_ms(), Ordering::Relaxed);
         }
         let behind = late && flying();
         // The slots that waited for a texture's host copy, before the
         // lists that may read them run.
-        crate::descriptor::make_waiting();
+        {
+            let _zone = crate::bench::zone(crate::bench::Z::MakeWaiting);
+            crate::descriptor::make_waiting();
+        }
         let this_submission = STARTED.fetch_add(1, Ordering::AcqRel) + 1;
         // The ranges shaders write are counted for it (with the relay).
         crate::shadow::preparing(this_submission);
@@ -3904,7 +3930,13 @@ impl Host {
         let lock = (started - called).as_micros() as u64;
         #[cfg(feature = "diagnostics")]
         crate::copystat::add(crate::copystat::C::Submissions, 1);
-        let mut lists: Vec<Option<ID3D12CommandList>> = Vec::with_capacity(2 * runs.len());
+        let mut lists: Vec<Option<ID3D12CommandList>> = Vec::with_capacity(2 * runs.len() + 2);
+        // The benchmark's timestamps: one before the lists, one after.
+        #[cfg(feature = "bench")]
+        let stamp_after = crate::bench::stamp_pair(&self.device, &self.queue).map(|(first, last)| {
+            lists.push(Some(first));
+            last
+        });
         // Where each run's lists start in `lists`.
         let mut firsts = Vec::with_capacity(runs.len());
         let mut batch = Batch::default();
@@ -3929,7 +3961,10 @@ impl Host {
                 }
             }
             let ranges: Vec<(usize, usize)> = spans.into_values().collect();
-            crate::watch::ask_once(&ranges);
+            {
+                let _zone = crate::bench::zone(crate::bench::Z::WatchAsk);
+                crate::watch::ask_once(&ranges);
+            }
             // Behind flights: the title wrote memory that a flight's shaders
             // may write too, and this submission refreshes it. The flights
             // are settled, and the asking made again: the copy-back wrote
@@ -3938,13 +3973,17 @@ impl Host {
                 let settling = std::time::Instant::now();
                 self.settle(&mut submitted, WHY_STALE);
                 settled += settling.elapsed();
+                {
+                let _zone = crate::bench::zone(crate::bench::Z::WatchAsk);
                 crate::watch::ask_once(&ranges);
+            }
             }
         } else if behind && stale_under_flights(runs) {
             let settling = std::time::Instant::now();
             self.settle(&mut submitted, WHY_STALE);
             settled += settling.elapsed();
         }
+        let deferred_zone = crate::bench::zone(crate::bench::Z::Deferred);
         for list in runs {
             list.run_deferred(&mut batch);
             firsts.push(lists.len());
@@ -3955,13 +3994,17 @@ impl Host {
         }
         batch.flush();
         crate::watch::ask_once_end();
+        drop(deferred_zone);
         // The snapshots of the ranges shaders may write, if they were left
         // for now (`crate::shadow::wide_back`): the refreshes are done, the
         // lists have not gone to the card.
         {
             #[cfg(feature = "diagnostics")]
             let snapshots = std::time::Instant::now();
-            crate::shadow::take_snapshots();
+            {
+                let _zone = crate::bench::zone(crate::bench::Z::Snapshots);
+                crate::shadow::take_snapshots();
+            }
             #[cfg(feature = "diagnostics")]
             crate::copystat::add(crate::copystat::C::SnapshotUs, snapshots.elapsed().as_micros() as u64);
         }
@@ -3974,15 +4017,23 @@ impl Host {
             self.settle(&mut submitted, WHY_MOST);
             settled += settling.elapsed();
         }
-        let card = self.card_before(runs, flown);
+        let card = {
+            let _zone = crate::bench::zone(crate::bench::Z::CardBefore);
+            self.card_before(runs, flown)
+        };
         if let Some(check) = card.as_ref().and_then(|c| c.check.clone()) {
             lists.push(Some(check));
+        }
+        #[cfg(feature = "bench")]
+        if let Some(last) = stamp_after {
+            lists.push(Some(last));
         }
         let prepared = std::time::Instant::now();
         if late {
             *submitted += 1;
             // SAFETY: closed lists; the fence is ours.
             let signalled = unsafe {
+                let _zone = crate::bench::zone(crate::bench::Z::Execute);
                 self.queue.ExecuteCommandLists(&lists);
                 self.queue.Signal(&self.fence, *submitted)
             };
@@ -4024,7 +4075,10 @@ impl Host {
             let started = std::time::Instant::now();
             // SAFETY: closed lists; the fence and event are ours.
             unsafe {
-                self.queue.ExecuteCommandLists(group);
+                {
+                    let _zone = crate::bench::zone(crate::bench::Z::Execute);
+                    self.queue.ExecuteCommandLists(group);
+                }
                 self.card_sent();
                 let waited = self
                     .queue
@@ -4033,7 +4087,10 @@ impl Host {
                 match waited {
                     Ok(()) => {
                         working(false);
-                        WaitForSingleObject(self.event, INFINITE);
+                        {
+                            let _zone = crate::bench::zone(crate::bench::Z::GpuWait);
+                            WaitForSingleObject(self.event, INFINITE);
+                        }
                         stood(started);
                         working(true);
                     }
@@ -4099,6 +4156,7 @@ impl Host {
             ));
         }
         submitting(3, runs.len());
+        let back_zone = crate::bench::zone(crate::bench::Z::CopyBack);
         // What shaders wrote goes back before the bottom-of-pipe writes,
         // which tell the title the GPU is done; each range once per
         // submission, however many dispatches declared it (the world's
@@ -4128,6 +4186,8 @@ impl Host {
             add(C::NothingBackUs, gpu.as_micros() as u64);
         }
         COPY_BACK[0].fetch_add(copying.elapsed().as_micros() as u64, Ordering::Relaxed);
+        drop(back_zone);
+        let _read = crate::bench::zone(crate::bench::Z::ReadBack);
         for list in runs {
             // Read backs first: a value written at the bottom of the pipe
             // may be what tells the title that they are there.
@@ -5076,6 +5136,13 @@ impl HostList {
         #[cfg(feature = "diagnostics")]
         use crate::copystat::{C, add};
         for step in &self.deferred().copies {
+            let _zone = crate::bench::zone(match step {
+                Step::Copy(..) | Step::Fill(..) => crate::bench::Z::StepCopy,
+                Step::Refresh(..) => crate::bench::Z::StepRefresh,
+                Step::Run(_) | Step::Host(_) => crate::bench::Z::StepRun,
+                Step::GpuWrite(..) => crate::bench::Z::StepGpuWrite,
+                Step::Texture(_) => crate::bench::Z::TexRefresh,
+            });
             let started = std::time::Instant::now();
             let copied = match step {
                 &Step::Copy(dst, src, len) => {
@@ -5144,6 +5211,7 @@ impl HostList {
                 }
                 Step::Texture(staging) => {
                     if batch.texture_due(staging) {
+                        let _zone = crate::bench::zone(crate::bench::Z::TexRefresh);
                         staging.refresh();
                     }
                     continue;
@@ -5224,6 +5292,7 @@ impl Batch {
 
     /// Brings `[from, to)` of a copy up to date, timed.
     fn update(shadow: &crate::shadow::Shadow, from: usize, to: usize) {
+        let _zone = crate::bench::zone(crate::bench::Z::CopyRefresh);
         let started = std::time::Instant::now();
         let copied = shadow.update(from, to - from);
         let us = started.elapsed().as_micros() as u64;
@@ -5869,7 +5938,36 @@ impl Host {
     /// Shows `texture`, which is in `state` (a host state) and stays in it,
     /// as frame `frame` (saved if captures are on). `None` if nothing was
     /// shown; else, in diagnostics builds, whether the frame was black.
+    /// The benchmark's frame boundary: the zones and counters of the frame
+    /// just presented are taken, its timestamps resolved, and at the end of
+    /// the measuring the result is written and the process ends.
+    #[cfg(feature = "bench")]
+    fn bench_frame(&self) {
+        if !crate::bench::on() {
+            return;
+        }
+        let (pipelines_made, pipelines_loaded) = crate::pipeline::bench_counts();
+        let (frame, next) = crate::bench::frame_end(crate::bench::Counters {
+            draws: crate::draw::drawn(),
+            dropped: crate::bench::DROPPED.load(Ordering::Relaxed),
+            submissions: STARTED.load(Ordering::Relaxed),
+            pipelines_made,
+            pipelines_loaded,
+            making: crate::pipeline::making(),
+        });
+        {
+            // No submission is between its timestamps and its send now.
+            let _held = self.submitted.lock().unwrap_or_else(|e| e.into_inner());
+            crate::bench::stamps_frame(&self.queue, frame);
+        }
+        if let crate::bench::Next::Done(error) = next {
+            settle_now(WHY_SYNC);
+            crate::bench::finish(error);
+        }
+    }
+
     pub(crate) fn present(&self, texture: &ID3D12Resource, state: u32, frame: u64) -> Option<bool> {
+        let present_zone = crate::bench::zone(crate::bench::Z::Present);
         // SAFETY: a live resource.
         let desc = unsafe { texture.GetDesc() };
         let Some(format) = swap_format(desc.Format) else {
@@ -5973,6 +6071,9 @@ impl Host {
                 crate::capture::save_read_back(frame, &buffer, &footprint);
             }
             let _ = p.swap_chain.Present(0, DXGI_PRESENT(0));
+            drop(present_zone);
+            #[cfg(feature = "bench")]
+            self.bench_frame();
             p.meter.frame(p.hwnd);
             #[cfg(feature = "diagnostics")]
             return Some(probe.is_some_and(|b| crate::capture::black(&b)));

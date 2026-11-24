@@ -964,7 +964,10 @@ impl State {
                     if srv && slot == victory_shader::emit::SLOT_STRIDES {
                         // Ours, not the title's: the shader picks buffers
                         // from the view heap by an index it computes.
-                        match self.heap_buffers(list) {
+                        match {
+                            let _zone = crate::bench::zone(crate::bench::Z::HeapBuffers);
+                            self.heap_buffers(list)
+                        } {
                             // SAFETY: an open list; the table lives as long
                             // as the heap the list holds.
                             Some(gpu) => unsafe {
@@ -1400,7 +1403,10 @@ impl State {
             }
             shadow.refresh(list, *from, to - from);
         }
-        self.heap_textures(list, heap, host);
+        {
+            let _zone = crate::bench::zone(crate::bench::Z::HeapTextures);
+            self.heap_textures(list, heap, host);
+        }
         HEAP_BUFFER_PASSES.fetch_add(1, Ordering::Relaxed);
         HEAP_BUFFER_MICROS.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
         static LOGGED: AtomicU64 = AtomicU64::new(0);
@@ -1680,13 +1686,21 @@ impl State {
         self.window = None;
         #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "bench")]
+                crate::bench::DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
             crate::pipeline::note_drop(self.pipeline as This);
             return;
         }
         // The ray-tracing structure builder's stages run all or none.
         if crate::pipeline::is_builder(self.pipeline as This) && !crate::pipeline::builder_runs() {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "bench")]
+                crate::bench::DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
             #[cfg(feature = "diagnostics")]
             {
                 crate::pipeline::note_why("a stage of the ray-tracing structure builder, which is off".to_owned());
@@ -1699,7 +1713,11 @@ impl State {
                 pipeline = format_args!("{:#x}", self.pipeline),
                 "a dispatch without a host pipeline dropped"
             );
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "bench")]
+                crate::bench::DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
             #[cfg(feature = "diagnostics")]
             {
                 crate::pipeline::note_drop(self.pipeline as This);
@@ -1712,7 +1730,11 @@ impl State {
             return;
         }
         if !self.bind(list, p, true) {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "bench")]
+                crate::bench::DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
             // A stage of the structure builder that cannot be bound is a
             // dropped stage: the others stop too.
             if crate::pipeline::is_builder(self.pipeline as This) {
@@ -1830,7 +1852,11 @@ impl State {
                 Err(_) => false,
             };
         if !ran {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "bench")]
+                crate::bench::DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
             #[cfg(feature = "diagnostics")]
             dropped(self.pipeline);
         }
@@ -2158,7 +2184,11 @@ impl State {
             DRAWN.fetch_add(1, Ordering::Relaxed);
         }
         if !ran {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "bench")]
+                crate::bench::DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
             #[cfg(feature = "diagnostics")]
             dropped(self.pipeline);
         }
@@ -2259,7 +2289,11 @@ impl State {
             DRAWN.fetch_add(1, Ordering::Relaxed);
         }
         if !ran {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "bench")]
+                crate::bench::DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
             #[cfg(feature = "diagnostics")]
             dropped(self.pipeline);
         }

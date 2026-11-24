@@ -25,6 +25,9 @@ blake3.workspace = true
 [features]
 # Debugging switches (frame capture, the host debug layer, per-draw data).
 diagnostics = []
+# Benchmark zones, the card's time by timestamp queries and the benchmark
+# mode (`VICTORY_BENCH=<file.json>`): see src/bench.rs.
+bench = []
 
 [lints]
 workspace = true

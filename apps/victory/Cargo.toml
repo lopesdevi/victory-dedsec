@@ -30,6 +30,8 @@ diagnostics = [
     "victory-loader/diagnostics",
     "victory-shader/diagnostics",
 ]
+# The benchmark mode (`VICTORY_BENCH=<file.json>`).
+bench = ["victory-hle/bench", "victory-gpu/bench"]
 
 [lints]
 workspace = true
