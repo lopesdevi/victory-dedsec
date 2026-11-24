@@ -21,6 +21,10 @@ memchr.workspace = true
 clap.workspace = true
 walkdir.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# `pso-repro` asks the device what it supports.
+windows = { workspace = true, features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi_Common"] }
+
 [features]
 # Debug-level logs and the debugging switches (frame capture, stack dumps,
 # the host debug layer, scripted keys). Off in a plain release build.

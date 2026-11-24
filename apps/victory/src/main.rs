@@ -6,6 +6,8 @@
 mod census;
 mod inspect;
 mod precompile;
+#[cfg(windows)]
+mod pso_repro;
 mod run;
 mod shader;
 mod translate;
@@ -114,6 +116,19 @@ enum Command {
         #[arg(long)]
         jobs: Option<usize>,
     },
+    /// Why the host refuses a pipeline: the shaders named by hash are
+    /// translated, validated and made into a pipeline with the Direct3D 12
+    /// debug layer on; what the device reports comes first.
+    PsoRepro {
+        /// Shader hashes (the 16 digits a run's log gives, or their start).
+        hashes: Vec<String>,
+        /// `<mesh or vertex>+<pixel>`: one pipeline of the two.
+        #[arg(long)]
+        pair: Vec<String>,
+        /// Where to look for the shaders (default: the configured game folder).
+        #[arg(long)]
+        path: Vec<PathBuf>,
+    },
     /// Show the resolved configuration and check it.
     Config,
 }
@@ -181,6 +196,10 @@ fn main() -> Result<()> {
             title_args: _,
         } => run::run(&exe, unimplemented, strict, execute, console),
         Command::Precompile { paths, jobs } => precompile::run(paths, jobs),
+        #[cfg(windows)]
+        Command::PsoRepro { hashes, pair, path } => pso_repro::run(path, hashes, pair),
+        #[cfg(not(windows))]
+        Command::PsoRepro { .. } => anyhow::bail!("pso-repro needs the Windows host"),
         Command::Config => show_config(),
     }
 }

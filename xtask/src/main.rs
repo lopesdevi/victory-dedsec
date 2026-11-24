@@ -26,12 +26,29 @@ enum Cmd {
     },
     /// Point git at .githooks/ so every commit runs the policy check.
     InstallHooks,
+    /// `victory pso-repro <args>`: why the host refuses the pipelines of the
+    /// shaders named by hash (translated, validated, made with the debug
+    /// layer on). Reads the pack; writes nothing.
+    PsoRepro {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> Result<()> {
     let root = workspace_root();
     match Cli::parse().command {
         Cmd::Policy { staged } => policy::run(&root, staged),
+        Cmd::PsoRepro { args } => {
+            let status = Command::new(env!("CARGO"))
+                .args(["run", "--quiet", "--profile", "diag", "-p", "victory", "--", "pso-repro"])
+                .args(&args)
+                .current_dir(&root)
+                .status()
+                .context("running cargo")?;
+            anyhow::ensure!(status.success(), "pso-repro: some pipelines were refused");
+            Ok(())
+        }
         Cmd::InstallHooks => {
             let status = Command::new("git")
                 .args(["config", "core.hooksPath", ".githooks"])
