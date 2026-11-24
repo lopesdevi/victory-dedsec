@@ -22,6 +22,44 @@ developer or publisher.
   another layer. Fixes inspired by it were written anew in VIctory's code.
 - This fork's changes were developed with [Claude Code](https://claude.com/claude-code).
 
+## lopesdevi/victory-fork: what this copy adds (2026-11-24)
+
+A fork of [fxceless/victory-fork](https://github.com/fxceless/victory-fork), a few commits on top of its
+`main` (`2119b0e`). Nothing here changes how the title is translated; these are tools and limits.
+The sections below this one are fxceless's and describe that fork and its test machine.
+
+Test machine of this copy: Windows Server 2025, 32-core Xeon, 123 GB RAM, NVIDIA RTX PRO 4500
+(Blackwell, 32 GB). What the device reports (`victory pso-repro`): shader model 6.8, waves of 32
+lanes only, 64-bit atomics on typed, groupshared and descriptor heap resources, native 16-bit
+operations, mesh shader tier 1, ray tracing tier 1.2, a view heap capped at 1,000,000.
+
+| Added | What it is for |
+|-------|----------------|
+| `victory precompile <pack>` | Every shader of a pack through the run's own translation into the run's cache: 25,587 of 25,889 distinct containers in 87 s on 29 threads |
+| Shader cache keyed by the translator's sources | A rebuild that leaves `victory-shader` alone keeps the cache (the key was the whole executable) |
+| `VICTORY_WIDE_THREADS`, `VICTORY_PIPELINE_WORKERS`, `VICTORY_HEAP_TEXTURE_MB`, `VICTORY_HEAP_TEXTURE_MS` | Thread and staging limits that were fixed |
+| Feature `bench`, `VICTORY_BENCH=<file.json>` | Zones of self time per thread, the card's time by timestamp queries, a JSON per run |
+| `victory pso-repro <hash...>` (`cargo xtask pso-repro`) | Why the host refuses a pipeline, offline, in seconds, with the device's report |
+
+Measured on this machine, in the prologue, over the same 60 s of the scene:
+
+| Configuration | ms per frame (mean) | fps |
+|---------------|--------------------:|----:|
+| default | 598.9 | 1.67 |
+| `VICTORY_LATE_WAIT=1` | 619.1 | 1.62 |
+| `VICTORY_RELAY=1` | 323.4 | 3.09 |
+| `VICTORY_LATE_WAIT=1 VICTORY_RELAY=1 VICTORY_INPLACE=1` | 884.8 | 1.13 |
+
+Translation of the whole pack on this device (26,084 programs): vertex and pixel 14,156 emitted of
+14,247 (14,156 pipelines made); compute 2,669 of 2,682 (2,644 pipelines); mesh 8,762 of 8,765 (8,762
+pipelines). Of the 25 compute pipelines the host refuses, 24 expect 64-lane waves: 17 translate for
+32 lanes with `VICTORY_WAVE_WIDE=1`, 7 have thread groups of several console waves. That switch
+stays off: a prologue run with it lost the device on this card too. In the prologue 710 draws and
+dispatches a frame are dropped, 705 of them stages of the ray-tracing structure builder, which is off.
+
+Not run for this copy: the whole test suite and clippy (the wave64 tests of `victory-shader` pass on
+this card).
+
 ## Status of this fork (2026-11-25)
 
 **Not playable yet: 2.5 to 4 frames per second, and shadowed areas are black.**
